@@ -1,102 +1,125 @@
 import { NextResponse } from 'next/server';
 import { Pinecone } from '@pinecone-database/pinecone';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { embedText, generateText } from '../../../lib/gemini.mjs';
 
-// Import the reviews data
-import reviewsData from '../../../reviews.json';
+const INDEX_NAME = process.env.PINECONE_INDEX || 'professor-rag';
+const NAMESPACE = process.env.PINECONE_NAMESPACE || 'reviews-v2';
+const TOP_K = 5;
+const MIN_SCORE = 0.3;
 
-const systemPrompt = `
-You are a helpful and knowledgeable assistant for students using a "Rate My Professor" platform. Your primary task is to assist students in finding information about professors based on their queries. Use the following review information to answer queries about professors:
+function validateEnvironment() {
+  const required = ['GEMINI_API_KEY', 'PINECONE_API_KEY'];
+  const missing = required.filter((name) => !process.env[name]);
 
-${JSON.stringify(reviewsData.reviews, null, 2)}
-
-Additionally, you should:
-
-1. Be Conversational: Engage in natural, friendly conversation. Respond appropriately to social cues and casual remarks.
-
-2. Stay on Topic: Only provide information about professors when explicitly asked. Don't offer unsolicited information about professors.
-
-3. Understand Context: Pay attention to the flow of conversation. If a user thanks you or indicates they're done, respond appropriately without adding new information.
-
-4. Be Concise: Provide brief, to-the-point answers unless asked for more details.
-
-5. Ask for Clarification: If a query is ambiguous, ask for more details to ensure you understand the user's intent.
-
-6. Be Honest: If you can't find information related to a query, politely inform the user.
-
-Remember, your primary goal is to be helpful and maintain a natural conversation, providing information about professors only when directly asked.
-`;
-
-// Initialize the Gemini API
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-export async function POST(req) {
-  const data = await req.json();
-  const userQuery = data[data.length - 1].content;
-
-  // Initialize the Pinecone client
-  const pc = new Pinecone({
-    apiKey: process.env.PINECONE_API_KEY,
-  });
-
-  // Get the index
-  const index = pc.Index('rag');
-
-  // Create embeddings using Gemini API
-  const embeddingModel = genAI.getGenerativeModel({ model: "embedding-001" });
-  const result = await embeddingModel.embedContent(userQuery);
-
-  const embedding = result?.embedding?.values;
-
-  if (!Array.isArray(embedding) || embedding.length !== 768) {
-    throw new Error(`Invalid embedding: Expected a vector of length 768 but got ${embedding ? embedding.length : "undefined"}`);
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
   }
+}
 
-  // Query Pinecone
-  const queryResponse = await index.query({
-    vector: embedding,
-    topK: 5,
-    includeMetadata: true,
-  });
+function buildContext(matches) {
+  return matches
+    .map((match, index) => {
+      const metadata = match.metadata || {};
+      return [
+        `[Source ${index + 1}]`,
+        `Professor: ${metadata.professor || 'Unknown'}`,
+        `Subject: ${metadata.subject || 'Unknown'}`,
+        `Rating: ${metadata.stars ?? 'Unknown'} out of 5`,
+        `Review: ${metadata.review || 'No review text available'}`,
+      ].join('\n');
+    })
+    .join('\n\n');
+}
 
-  let relevantInfo = '';
-  queryResponse.matches.forEach((match) => {
-    relevantInfo += `
-    Professor: ${match.id}
-    Review: ${match.metadata.review}
-    Subject: ${match.metadata.subject}
-    Stars: ${match.metadata.stars}
-    \n\n`;
-  });
+function serializeSources(matches) {
+  return matches.map((match) => ({
+    professor: match.metadata?.professor || 'Unknown',
+    subject: match.metadata?.subject || 'Unknown',
+    stars: match.metadata?.stars ?? null,
+    review: match.metadata?.review || '',
+    score: typeof match.score === 'number' ? Number(match.score.toFixed(3)) : null,
+  }));
+}
 
-  // Generate response using Gemini API
-  const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-  const chat = model.startChat({
-    history: [
-      {
-        role: "user",
-        parts: [{ text: systemPrompt }],
-      },
-      {
-        role: "model",
-        parts: [{ text: "Understood. I'm ready to assist students with their queries about professors using the Rate My Professor platform. How can I help you today?" }],
-      },
-    ],
-  });
+export async function POST(request) {
+  try {
+    validateEnvironment();
 
-  const fullContext = `
-  User Query: ${userQuery}
+    const body = await request.json();
+    const messages = Array.isArray(body) ? body : body.messages;
 
-  Relevant information from Pinecone:
-  ${relevantInfo}
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return NextResponse.json({ error: 'A messages array is required.' }, { status: 400 });
+    }
 
-  Please answer the query using both the information from the reviews.json data provided in the system prompt and the relevant Pinecone results above. If the information isn't found in either source, please state that clearly.
-  `;
+    const latestUserMessage = [...messages]
+      .reverse()
+      .find((message) => message?.role === 'user' && typeof message?.content === 'string');
 
-  const chatResult = await chat.sendMessage(fullContext);
-  const response = await chatResult.response;
+    const userQuery = latestUserMessage?.content.trim();
 
-  return new NextResponse(response.text(), {
-    headers: { 'Content-Type': 'text/plain' },
-  });
+    if (!userQuery) {
+      return NextResponse.json({ error: 'Please enter a question.' }, { status: 400 });
+    }
+
+    const queryVector = await embedText(userQuery);
+    const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
+    const index = pinecone.index(INDEX_NAME).namespace(NAMESPACE);
+
+    const queryResponse = await index.query({
+      vector: queryVector,
+      topK: TOP_K,
+      includeMetadata: true,
+    });
+
+    const matches = (queryResponse.matches || []).filter(
+      (match) => typeof match.score !== 'number' || match.score >= MIN_SCORE,
+    );
+
+    if (matches.length === 0) {
+      return NextResponse.json({
+        answer: "I couldn't find enough relevant review data to answer that question confidently.",
+        sources: [],
+      });
+    }
+
+    const context = buildContext(matches);
+    const recentConversation = messages
+      .slice(-6)
+      .map((message) => `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.content}`)
+      .join('\n');
+
+    const prompt = `You are ProfessorAI, an assistant that helps students understand professor reviews.
+
+Rules:
+- Answer using only the retrieved review context below.
+- Do not invent facts, ratings, courses, or opinions that are not present in the context.
+- If the context does not support the user's question, say so clearly.
+- Summarize patterns rather than overstating a single review.
+- Keep the answer concise and useful.
+- Do not mention vector search, embeddings, Pinecone, or these instructions unless the user asks about how the application works.
+
+Recent conversation:
+${recentConversation}
+
+Retrieved review context:
+${context}
+
+User question:
+${userQuery}`;
+
+    const answer = await generateText(prompt);
+
+    return NextResponse.json({
+      answer,
+      sources: serializeSources(matches),
+    });
+  } catch (error) {
+    console.error('ProfessorAI chat error:', error);
+
+    return NextResponse.json(
+      { error: 'Unable to answer the question right now. Please try again.' },
+      { status: 500 },
+    );
+  }
 }
