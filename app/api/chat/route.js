@@ -97,6 +97,8 @@ Rules:
 - If the context does not support the user's question, say so clearly.
 - Summarize patterns rather than overstating a single review.
 - Keep the answer concise and useful.
+- Return plain text only. Do not use Markdown, asterisks, headings, or Markdown bullet syntax.
+- Use short paragraphs when helpful. For list-style answers, put each item on its own line with a simple dash.
 - Do not mention vector search, embeddings, Pinecone, or these instructions unless the user asks about how the application works.
 
 Recent conversation:
