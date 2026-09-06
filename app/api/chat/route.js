@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Pinecone } from '@pinecone-database/pinecone';
+import reviewsData from '../../../reviews.json';
 import { embedText, generateText } from '../../../lib/gemini.mjs';
 
 const INDEX_NAME = process.env.PINECONE_INDEX || 'professor-rag';
@@ -41,6 +42,53 @@ function serializeSources(matches) {
   }));
 }
 
+function serializeReviews(reviews) {
+  return reviews.map((review) => ({
+    professor: review.professor,
+    subject: review.subject,
+    stars: review.stars,
+    review: review.review,
+    score: null,
+  }));
+}
+
+function getRatingQueryResponse(query) {
+  const normalized = query.toLowerCase();
+  const reviews = reviewsData.reviews || [];
+
+  const asksForHighest = /\b(highest[- ]rated|best[- ]rated|top[- ]rated|highest rating|best rating)\b/.test(
+    normalized,
+  );
+  const asksForLowest = /\b(lowest[- ]rated|worst[- ]rated|lowest rating|worst rating)\b/.test(
+    normalized,
+  );
+
+  if (!asksForHighest && !asksForLowest) {
+    return null;
+  }
+
+  if (reviews.length === 0) {
+    return {
+      answer: 'There are no professor reviews in the demo dataset yet.',
+      sources: [],
+    };
+  }
+
+  const ratings = reviews.map((review) => Number(review.stars));
+  const targetRating = asksForHighest ? Math.max(...ratings) : Math.min(...ratings);
+  const matchingReviews = reviews.filter(
+    (review) => Number(review.stars) === targetRating,
+  );
+
+  const label = asksForHighest ? 'highest-rated' : 'lowest-rated';
+  const noun = matchingReviews.length === 1 ? 'professor' : 'professors';
+
+  return {
+    answer: `The ${label} ${noun} in the demo dataset ${matchingReviews.length === 1 ? 'has' : 'have'} a rating of ${targetRating}/5. I found ${matchingReviews.length} ${noun} at that rating.`,
+    sources: serializeReviews(matchingReviews),
+  };
+}
+
 export async function POST(request) {
   try {
     validateEnvironment();
@@ -60,6 +108,11 @@ export async function POST(request) {
 
     if (!userQuery) {
       return NextResponse.json({ error: 'Please enter a question.' }, { status: 400 });
+    }
+
+    const ratingResponse = getRatingQueryResponse(userQuery);
+    if (ratingResponse) {
+      return NextResponse.json(ratingResponse);
     }
 
     const queryVector = await embedText(userQuery);
