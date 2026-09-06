@@ -1,25 +1,146 @@
 'use client'
-import { Box, Button, Stack, TextField, Typography } from '@mui/material'
-import { useState } from 'react'
+
+import {
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Container,
+  Divider,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
+import { useEffect, useRef, useState } from 'react'
+
+const starterPrompts = [
+  'Who are the highest-rated professors?',
+  'Which professors are known for engaging lectures?',
+  'Who has the most challenging classes?',
+]
+
+const initialMessages = [
+  {
+    role: 'assistant',
+    content:
+      'Ask a question about the demo professor reviews. I’ll search the review data and show the sources used for the answer.',
+    sources: [],
+  },
+]
+
+function SourceCard({ source }) {
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        p: 1.5,
+        borderRadius: 2.5,
+        borderColor: 'divider',
+        bgcolor: 'background.paper',
+      }}
+    >
+      <Stack spacing={0.75}>
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          justifyContent="space-between"
+          gap={0.5}
+        >
+          <Box>
+            <Typography fontWeight={700} variant="body2">
+              {source.professor}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {source.subject}
+            </Typography>
+          </Box>
+          {source.stars !== null && (
+            <Chip
+              size="small"
+              label={`${source.stars}/5`}
+              sx={{ alignSelf: { xs: 'flex-start', sm: 'center' }, fontWeight: 700 }}
+            />
+          )}
+        </Stack>
+        <Typography variant="body2" color="text.secondary" lineHeight={1.55}>
+          “{source.review}”
+        </Typography>
+      </Stack>
+    </Paper>
+  )
+}
+
+function ChatMessage({ message }) {
+  const isAssistant = message.role === 'assistant'
+
+  return (
+    <Box display="flex" justifyContent={isAssistant ? 'flex-start' : 'flex-end'}>
+      <Stack
+        spacing={1.25}
+        sx={{
+          width: isAssistant ? 'min(760px, 100%)' : 'auto',
+          maxWidth: isAssistant ? '100%' : '80%',
+          alignItems: isAssistant ? 'stretch' : 'flex-end',
+        }}
+      >
+        <Paper
+          elevation={0}
+          sx={{
+            px: 2,
+            py: 1.6,
+            borderRadius: 3,
+            bgcolor: isAssistant ? 'background.paper' : 'primary.main',
+            color: isAssistant ? 'text.primary' : 'primary.contrastText',
+            border: isAssistant ? '1px solid' : 'none',
+            borderColor: 'divider',
+            whiteSpace: 'pre-wrap',
+            lineHeight: 1.65,
+          }}
+        >
+          <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+            {message.content}
+          </Typography>
+        </Paper>
+
+        {isAssistant && message.sources?.length > 0 && (
+          <Box>
+            <Typography
+              variant="overline"
+              color="text.secondary"
+              sx={{ display: 'block', mb: 0.75, fontWeight: 700, letterSpacing: 1 }}
+            >
+              Retrieved reviews
+            </Typography>
+            <Stack spacing={1}>
+              {message.sources.map((source, index) => (
+                <SourceCard
+                  key={`${source.professor}-${source.subject}-${index}`}
+                  source={source}
+                />
+              ))}
+            </Stack>
+          </Box>
+        )}
+      </Stack>
+    </Box>
+  )
+}
 
 export default function Home() {
-  const [messages, setMessages] = useState([
-    {
-      role: 'assistant',
-      content: `Hi! I'm ProfessorAI. Ask me about the professor reviews in the demo dataset.`,
-    },
-  ])
+  const [messages, setMessages] = useState(initialMessages)
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const bottomRef = useRef(null)
 
-  const sendMessage = async () => {
-    const trimmedMessage = message.trim()
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, isLoading])
+
+  const sendMessage = async (overrideMessage) => {
+    const trimmedMessage = (overrideMessage ?? message).trim()
     if (!trimmedMessage || isLoading) return
 
-    const nextMessages = [
-      ...messages,
-      { role: 'user', content: trimmedMessage },
-    ]
+    const nextMessages = [...messages, { role: 'user', content: trimmedMessage }]
 
     setMessage('')
     setMessages(nextMessages)
@@ -54,6 +175,7 @@ export default function Home() {
         {
           role: 'assistant',
           content: error.message || 'Something went wrong. Please try again.',
+          sources: [],
         },
       ])
     } finally {
@@ -61,119 +183,182 @@ export default function Home() {
     }
   }
 
+  const clearChat = () => {
+    if (isLoading) return
+    setMessages(initialMessages)
+    setMessage('')
+  }
+
   return (
-    <Box
-      width="100vw"
-      height="100vh"
-      display="flex"
-      flexDirection="column"
-      justifyContent="center"
-      alignItems="center"
-      sx={{
-        background: 'linear-gradient(135deg, #1f1c2c 0%, #928dab 100%)',
-      }}
-    >
-      <Typography
-        variant="h4"
-        color="white"
+    <Box minHeight="100vh" bgcolor="background.default">
+      <Box
+        component="header"
         sx={{
-          fontFamily: '"Raleway", sans-serif',
-          marginBottom: '20px',
-          textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+          bgcolor: 'rgba(255,255,255,0.92)',
+          backdropFilter: 'blur(12px)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
         }}
       >
-        ProfessorAI
-      </Typography>
-      <Stack
-        direction={'column'}
-        width="500px"
-        maxWidth="calc(100vw - 32px)"
-        height="700px"
-        maxHeight="calc(100vh - 120px)"
-        borderRadius="16px"
-        p={2}
-        spacing={3}
-        sx={{
-          backgroundColor: 'rgba(255, 255, 255, 0.1)',
-          backdropFilter: 'blur(10px)',
-          boxShadow: '0px 0px 30px rgba(0, 0, 0, 0.5)',
-        }}
-      >
-        <Stack
-          direction={'column'}
-          spacing={2}
-          flexGrow={1}
-          overflow="auto"
-          maxHeight="100%"
-        >
-          {messages.map((chatMessage, index) => (
-            <Box
-              key={index}
-              display="flex"
-              justifyContent={
-                chatMessage.role === 'assistant' ? 'flex-start' : 'flex-end'
-              }
-            >
-              <Box
-                sx={{
-                  backgroundColor:
-                    chatMessage.role === 'assistant'
-                      ? 'rgba(33, 150, 243, 0.8)'
-                      : 'rgba(156, 39, 176, 0.8)',
-                  color: 'white',
-                  borderRadius: '16px',
-                  p: 2,
-                  maxWidth: '80%',
-                  wordWrap: 'break-word',
-                  boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.2)',
-                }}
-              >
-                {chatMessage.content}
-              </Box>
+        <Container maxWidth="lg">
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+            minHeight={72}
+            gap={2}
+          >
+            <Box>
+              <Typography variant="h6" fontWeight={800} letterSpacing={-0.4}>
+                ProfessorAI
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                RAG-powered professor review search
+              </Typography>
             </Box>
-          ))}
-          {isLoading && (
-            <Typography color="white" variant="body2">
-              Searching reviews...
+            <Button variant="text" onClick={clearChat} disabled={isLoading}>
+              Clear chat
+            </Button>
+          </Stack>
+        </Container>
+      </Box>
+
+      <Container maxWidth="lg" sx={{ py: { xs: 3, md: 5 } }}>
+        <Stack spacing={3.5}>
+          <Box maxWidth={760}>
+            <Typography
+              variant="h3"
+              fontWeight={800}
+              letterSpacing={-1.5}
+              sx={{ fontSize: { xs: '2rem', md: '3rem' } }}
+            >
+              Explore professor reviews with AI
             </Typography>
-          )}
-        </Stack>
-        <Stack direction={'row'} spacing={2}>
-          <TextField
-            label="Ask about a professor"
-            fullWidth
-            value={message}
-            disabled={isLoading}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                sendMessage()
-              }
-            }}
+            <Typography color="text.secondary" mt={1.25} lineHeight={1.7}>
+              Ask natural-language questions and get answers grounded in semantically
+              retrieved review data from Pinecone.
+            </Typography>
+          </Box>
+
+          <Stack direction="row" gap={1} flexWrap="wrap" useFlexGap>
+            {starterPrompts.map((prompt) => (
+              <Chip
+                key={prompt}
+                label={prompt}
+                onClick={() => sendMessage(prompt)}
+                clickable
+                disabled={isLoading}
+                sx={{
+                  borderRadius: 2,
+                  bgcolor: 'background.paper',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  '&:hover': { bgcolor: 'action.hover' },
+                }}
+              />
+            ))}
+          </Stack>
+
+          <Paper
+            elevation={0}
             sx={{
-              backgroundColor: 'rgba(255, 255, 255, 0.2)',
-              borderRadius: '8px',
-              input: {
-                color: 'white',
-              },
-            }}
-          />
-          <Button
-            variant="contained"
-            onClick={sendMessage}
-            disabled={isLoading || !message.trim()}
-            sx={{
-              backgroundColor: '#21a1f1',
-              ':hover': {
-                backgroundColor: '#1e88e5',
-              },
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 4,
+              overflow: 'hidden',
+              bgcolor: 'background.paper',
             }}
           >
-            Send
-          </Button>
+            <Box
+              sx={{
+                minHeight: { xs: 420, md: 520 },
+                maxHeight: { xs: '58vh', md: '62vh' },
+                overflowY: 'auto',
+                p: { xs: 2, md: 3 },
+                bgcolor: '#f8fafc',
+              }}
+            >
+              <Stack spacing={2.5}>
+                {messages.map((chatMessage, index) => (
+                  <ChatMessage key={`${chatMessage.role}-${index}`} message={chatMessage} />
+                ))}
+
+                {isLoading && (
+                  <Box display="flex" justifyContent="flex-start">
+                    <Paper
+                      elevation={0}
+                      sx={{
+                        px: 2,
+                        py: 1.5,
+                        borderRadius: 3,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                      }}
+                    >
+                      <Stack direction="row" spacing={1.25} alignItems="center">
+                        <CircularProgress size={18} thickness={5} />
+                        <Typography variant="body2" color="text.secondary">
+                          Searching reviews and generating an answer...
+                        </Typography>
+                      </Stack>
+                    </Paper>
+                  </Box>
+                )}
+                <div ref={bottomRef} />
+              </Stack>
+            </Box>
+
+            <Divider />
+
+            <Box p={{ xs: 1.5, md: 2 }}>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
+                <TextField
+                  placeholder="Ask about ratings, teaching style, workload, or subjects..."
+                  fullWidth
+                  multiline
+                  minRows={1}
+                  maxRows={4}
+                  value={message}
+                  disabled={isLoading}
+                  onChange={(event) => setMessage(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      sendMessage()
+                    }
+                  }}
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: 2.5,
+                      bgcolor: '#fff',
+                    },
+                  }}
+                />
+                <Button
+                  variant="contained"
+                  size="large"
+                  onClick={() => sendMessage()}
+                  disabled={isLoading || !message.trim()}
+                  sx={{
+                    minWidth: { xs: '100%', sm: 120 },
+                    borderRadius: 2.5,
+                    textTransform: 'none',
+                    fontWeight: 700,
+                  }}
+                >
+                  Send
+                </Button>
+              </Stack>
+              <Typography variant="caption" color="text.secondary" display="block" mt={1}>
+                Demo data is synthetic and intended to demonstrate the RAG architecture.
+              </Typography>
+            </Box>
+          </Paper>
         </Stack>
-      </Stack>
+      </Container>
     </Box>
   )
 }
