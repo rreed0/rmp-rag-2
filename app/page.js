@@ -6,46 +6,59 @@ export default function Home() {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
-      content: `Hi! I'm the Rate My Professor support assistant. How can I help you today?`,
+      content: `Hi! I'm ProfessorAI. Ask me about the professor reviews in the demo dataset.`,
     },
   ])
   const [message, setMessage] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
 
   const sendMessage = async () => {
-    setMessage('')
-    setMessages((messages) => [
+    const trimmedMessage = message.trim()
+    if (!trimmedMessage || isLoading) return
+
+    const nextMessages = [
       ...messages,
-      { role: 'user', content: message },
-      { role: 'assistant', content: '' },
-    ])
+      { role: 'user', content: trimmedMessage },
+    ]
 
-    const response = fetch('/api/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify([...messages, { role: 'user', content: message }]),
-    }).then(async (res) => {
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let result = ''
+    setMessage('')
+    setMessages(nextMessages)
+    setIsLoading(true)
 
-      return reader.read().then(function processText({ done, value }) {
-        if (done) {
-          return result
-        }
-        const text = decoder.decode(value || new Uint8Array(), { stream: true })
-        setMessages((messages) => {
-          let lastMessage = messages[messages.length - 1]
-          let otherMessages = messages.slice(0, messages.length - 1)
-          return [
-            ...otherMessages,
-            { ...lastMessage, content: lastMessage.content + text },
-          ]
-        })
-        return reader.read().then(processText)
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ messages: nextMessages }),
       })
-    })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Unable to get a response.')
+      }
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          role: 'assistant',
+          content: data.answer,
+          sources: data.sources || [],
+        },
+      ])
+    } catch (error) {
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          role: 'assistant',
+          content: error.message || 'Something went wrong. Please try again.',
+        },
+      ])
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -61,20 +74,22 @@ export default function Home() {
       }}
     >
       <Typography
-        variant="h4" // Reduced font size
+        variant="h4"
         color="white"
         sx={{
-          fontFamily: '"Raleway", sans-serif', // Updated font to Raleway
+          fontFamily: '"Raleway", sans-serif',
           marginBottom: '20px',
           textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
         }}
       >
-        TeachTinder
+        ProfessorAI
       </Typography>
       <Stack
         direction={'column'}
         width="500px"
+        maxWidth="calc(100vw - 32px)"
         height="700px"
+        maxHeight="calc(100vh - 120px)"
         borderRadius="16px"
         p={2}
         spacing={3}
@@ -91,18 +106,18 @@ export default function Home() {
           overflow="auto"
           maxHeight="100%"
         >
-          {messages.map((message, index) => (
+          {messages.map((chatMessage, index) => (
             <Box
               key={index}
               display="flex"
               justifyContent={
-                message.role === 'assistant' ? 'flex-start' : 'flex-end'
+                chatMessage.role === 'assistant' ? 'flex-start' : 'flex-end'
               }
             >
               <Box
                 sx={{
                   backgroundColor:
-                    message.role === 'assistant'
+                    chatMessage.role === 'assistant'
                       ? 'rgba(33, 150, 243, 0.8)'
                       : 'rgba(156, 39, 176, 0.8)',
                   color: 'white',
@@ -113,17 +128,29 @@ export default function Home() {
                   boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.2)',
                 }}
               >
-                {message.content}
+                {chatMessage.content}
               </Box>
             </Box>
           ))}
+          {isLoading && (
+            <Typography color="white" variant="body2">
+              Searching reviews...
+            </Typography>
+          )}
         </Stack>
         <Stack direction={'row'} spacing={2}>
           <TextField
-            label="Message"
+            label="Ask about a professor"
             fullWidth
             value={message}
+            disabled={isLoading}
             onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                sendMessage()
+              }
+            }}
             sx={{
               backgroundColor: 'rgba(255, 255, 255, 0.2)',
               borderRadius: '8px',
@@ -135,6 +162,7 @@ export default function Home() {
           <Button
             variant="contained"
             onClick={sendMessage}
+            disabled={isLoading || !message.trim()}
             sx={{
               backgroundColor: '#21a1f1',
               ':hover': {
