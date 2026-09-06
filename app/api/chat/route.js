@@ -172,6 +172,20 @@ ${userQuery}`;
   } catch (error) {
     console.error('ProfessorAI chat error:', error);
 
+    if (
+      error?.code === 'DAILY_QUOTA_EXHAUSTED' ||
+      error?.code === 'ALL_CHAT_QUOTAS_EXHAUSTED'
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'The AI demo has reached its current free-tier usage limit. Please try again later.',
+          code: 'AI_QUOTA_EXHAUSTED',
+        },
+        { status: 429 },
+      );
+    }
+
     return NextResponse.json(
       { error: 'Unable to answer the question right now. Please try again.' },
       { status: 500 },
